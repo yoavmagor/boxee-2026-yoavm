@@ -28,11 +28,50 @@ fi
 
 echo "$(date): Found Kodi at $KODI_DIR" >> $LOG
 
-# Let the system settle before killing Boxee
-sleep 3
+# --- Kill Boxee and KEEP it dead -------------------------------------------
+# A single killall loses the race: /opt/boxee/run_boxee.sh is a loop that
+# respawns Boxee the instant it dies, so Boxee comes back alive and squats on
+# the SMD hardware video decoder — which makes Kodi play no video even though
+# its UI works. Fix: kill the RESPAWNER first (so no new Boxee is spawned),
+# then kill Boxee itself.
+kill_respawner() {
+    # run_boxee.sh runs as "/bin/sh ...", so killall by name won't match it.
+    # Find it by scanning /proc cmdlines and kill the loop.
+    for p in /proc/[0-9]*; do
+        if tr '\0' ' ' < "$p/cmdline" 2>/dev/null | grep -q run_boxee.sh; then
+            kill "${p#/proc/}" 2>/dev/null
+        fi
+    done
+}
 
-killall Boxee BoxeeLauncher BoxeeHal 2>/dev/null
-sleep 2
+kill_respawner
+killall Boxee BoxeeLauncher BoxeeHal BoxeeApplication 2>/dev/null
+
+# Belt-and-suspenders reaper: keep killing the respawner + Boxee in the
+# background for a short window, in case the loop spawned a new child mid-kill.
+(
+    n=0
+    while [ "$n" -lt 20 ]; do
+        kill_respawner
+        killall Boxee BoxeeLauncher BoxeeHal BoxeeApplication 2>/dev/null
+        n=$((n + 1))
+        sleep 1
+    done
+) &
+
+# Wait until Boxee is confirmed gone before launching Kodi, so the SMD decoder
+# is actually free. Require 3 consecutive clear polls, up to ~30s.
+clear_count=0
+for i in $(seq 1 30); do
+    if pidof Boxee >/dev/null 2>&1; then
+        clear_count=0
+    else
+        clear_count=$((clear_count + 1))
+        [ "$clear_count" -ge 3 ] && break
+    fi
+    sleep 1
+done
+echo "$(date): Boxee confirmed down after ${i}s — launching Kodi" >> $LOG
 
 cd "$KODI_DIR" || exit 1
 

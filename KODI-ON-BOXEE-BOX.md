@@ -166,9 +166,26 @@ if [ -z "$KODI_DIR" ]; then
 fi
 
 echo "$(date): Found Kodi at $KODI_DIR" >> $LOG
-sleep 3
-killall Boxee BoxeeLauncher BoxeeHal 2>/dev/null
-sleep 2
+
+# Kill Boxee's respawner FIRST (/opt/boxee/run_boxee.sh relaunches Boxee the
+# instant it dies), then Boxee itself. A single killall loses this race and
+# leaves Boxee holding the SMD video decoder — Kodi's UI works but no video
+# plays. Then wait until Boxee is confirmed gone before launching Kodi.
+kill_respawner() {
+    for p in /proc/[0-9]*; do
+        if tr '\0' ' ' < "$p/cmdline" 2>/dev/null | grep -q run_boxee.sh; then
+            kill "${p#/proc/}" 2>/dev/null
+        fi
+    done
+}
+kill_respawner
+killall Boxee BoxeeLauncher BoxeeHal BoxeeApplication 2>/dev/null
+( n=0; while [ "$n" -lt 20 ]; do kill_respawner; killall Boxee BoxeeLauncher BoxeeHal BoxeeApplication 2>/dev/null; n=$((n+1)); sleep 1; done ) &
+clear_count=0
+for i in $(seq 1 30); do
+    if pidof Boxee >/dev/null 2>&1; then clear_count=0; else clear_count=$((clear_count+1)); [ "$clear_count" -ge 3 ] && break; fi
+    sleep 1
+done
 cd "$KODI_DIR" || exit 1
 
 export HOME=/data
