@@ -1,3 +1,5 @@
+
+
 # boxee-2026-yoavm
 
 Run **Kodi 14.2 (Helix)** on a Boxee Box (D-Link DSM-380, Intel CE4100) in 2026 — with full Plex integration via PlexBMC and 5.1 audio passthrough over optical.
